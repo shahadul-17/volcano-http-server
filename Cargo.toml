@@ -1,0 +1,19 @@
+[package]
+name = "volcano-http-server"
+description = "An ultra lightweight HTTP server that powers Volcano (Node.js framework)."
+version = "0.0.1"
+authors = ["Md. Shahadul Alam Patwary"]
+repository = "https://github.com/shahadul-17/volcano-http-server"
+readme = "README.md"
+license = "MIT"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = { version = "0.3.28" }
+hyper = { version = "0.14.27", features = ["full"] }
+serde = { version = "^1.0.185", features = ["derive"] }
+serde_json = { version = "^1.0.105" }
+tokio = { version = "1.32.0", features = ["full"] }
+urlencoding = { version = "2.1.3" }
