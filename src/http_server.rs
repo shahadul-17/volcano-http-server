@@ -13,37 +13,38 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use self::http_utilities::SerializableHttpPayload;
+use self::http_utilities::{SerializableHttpRequest, SerializableHttpResponse};
 use crate::ipc_handler::{self, IpcOptions};
 
 static HTTP_REQUEST_COUNT: AtomicU64 = AtomicU64::new(1_u64);
 
 async fn get_parent_process_response_async(
-    http_request: &SerializableHttpPayload,
+    http_request: &SerializableHttpRequest,
     ipc_options_arc: &Arc<Mutex<IpcOptions>>,
 ) -> Response<Body> {
     // converts http request to JSON...
     let http_request_as_json = http_request.to_string();
-    let payload_id = http_request.payload_id;
+    let request_id = http_request.request_id;
 
     // writes the http request data to the standard output as JSON...
     ipc_handler::write_line(&http_request_as_json);
 
     // clones IPC Options ARC...
     let cloned_ipc_options_arc = ipc_options_arc.clone();
-    let read_line_future = ipc_handler::read_line_async(cloned_ipc_options_arc, payload_id);
+    let read_line_future = ipc_handler::read_line_async(cloned_ipc_options_arc, request_id);
     // reads the specified line...
     let line_read = tokio::spawn(read_line_future).await.unwrap();
+    let serializable_http_response_option = SerializableHttpResponse::from(line_read);
+
+    if serializable_http_response_option.is_none() {
+        return Response::builder()
+            .status(500)
+            .body(Body::from("ERROR"))
+            .unwrap();
+    }
+
     // preparing the response...
-    let response = Response::builder()
-        .status(200)
-        .header("X-Powered-By", "Node.js")
-        .header("Content-Type", "application/json")
-        // .header("Set-Cookie", "hello=world")
-        // .header("Set-Cookie", "how=are")
-        // .body(Body::from("Hello World from RUST HTTP server..!!"));
-        .body(Body::from(line_read))
-        .unwrap();
+    let response = serializable_http_response_option.unwrap().to_response();
 
     return response;
 }

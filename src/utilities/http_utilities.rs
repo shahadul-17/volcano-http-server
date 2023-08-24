@@ -1,4 +1,4 @@
-use hyper::{body::HttpBody, http::HeaderValue, Body, HeaderMap, Request};
+use hyper::{body::HttpBody, http::HeaderValue, Body, HeaderMap, Request, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{to_string, Value};
 use std::{collections::HashMap, net::SocketAddr, str::FromStr};
@@ -7,29 +7,29 @@ use urlencoding::decode;
 const BOUNDARY_MARKER: &str = "boundary=";
 const BOUNDARY_MARKER_LENGTH: usize = BOUNDARY_MARKER.len();
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct SerializableHttpPayload {
-    pub payload_id: u64,
+pub struct SerializableHttpRequest {
+    pub request_id: u64,
     pub remote_ip_address: String,
     pub remote_port: i32,
     pub method: String,
     pub path: String,
     pub queries: HashMap<String, Vec<String>>,
     pub headers: HashMap<String, Vec<String>>,
-    pub body: String,
-    pub body_as_object: Value,
+    pub body_as_text: String,
+    pub body: Value,
     pub url_encoded_from_data: HashMap<String, Vec<String>>,
 }
 
-impl SerializableHttpPayload {
+impl SerializableHttpRequest {
     pub fn to_json(&self) -> String {
         let result = to_string(self);
 
         if result.is_err() {
             let error = result.unwrap_err();
 
-            eprintln!("An error occurred while serializing the http payload: {error}");
+            eprintln!("An error occurred while serializing the HTTP request: {error}");
 
             return String::from("");
         }
@@ -39,6 +39,47 @@ impl SerializableHttpPayload {
 
     pub fn to_string(&self) -> String {
         return self.to_json();
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SerializableHttpResponse {
+    pub request_id: u64,
+    pub status_code: u16,
+    pub headers: HashMap<String, Vec<String>>,
+    pub body: Value,
+}
+
+impl SerializableHttpResponse {
+    pub fn from(json: String) -> Option<Self> {
+        let deserialization_result: Result<Self, serde_json::Error> = serde_json::from_str(&json);
+
+        if deserialization_result.is_err() {
+            let error = deserialization_result.unwrap_err();
+
+            eprintln!("An error occurred while deserializing into HTTP response: {error}");
+
+            return None;
+        }
+
+        return Some(deserialization_result.unwrap());
+    }
+
+    pub fn to_response(&self) -> Response<Body> {
+        let headers = self.headers.iter();
+        let mut response = Response::builder().status(self.status_code);
+
+        for (header_name, header_values) in headers {
+            for header_value in header_values {
+                response = response.header(header_name.to_owned(), header_value.to_owned());
+            }
+        }
+
+        let body_as_json = self.body.to_string();
+        let body = Body::from(body_as_json);
+
+        return response.body(body).unwrap();
     }
 }
 
@@ -210,7 +251,7 @@ pub async fn serialize_http_request_async(
     request_id: u64,
     remote_address: SocketAddr,
     mut request: Request<Body>,
-) -> SerializableHttpPayload {
+) -> SerializableHttpRequest {
     let mut remote_ip_address = remote_address.ip().to_string();
     let remote_port = i32::from(remote_address.port());
     let method = request.method().as_str().to_owned();
@@ -228,8 +269,8 @@ pub async fn serialize_http_request_async(
         remote_ip_address = forwarded_for.to_owned();
     }
 
-    let mut body = String::from("");
-    let mut body_as_object: Value = Value::Null;
+    let mut body_as_text = String::from("");
+    let mut body: Value = Value::Null;
     let mut url_encoded_form_data: HashMap<String, Vec<String>> = HashMap::new();
     let content_type = get_header_value("content-type", 0, &headers);
     let is_json_content = content_type.contains("json");
@@ -241,20 +282,20 @@ pub async fn serialize_http_request_async(
     // if content type is any of the text types or JSON types,
     // we shall parse the body as text...
     if shall_parse_body_as_text {
-        body = parse_body_as_text_async(content_type, request.body_mut()).await;
+        body_as_text = parse_body_as_text_async(content_type, request.body_mut()).await;
 
         if is_json_content {
-            let result = Value::from_str(&body);
+            let result = Value::from_str(&body_as_text);
 
             if result.is_err() {
                 let error = result.unwrap_err();
 
                 eprintln!("An error occurred while serializing body as JSON: {error}");
             } else {
-                body_as_object = result.unwrap();
+                body = result.unwrap();
             }
         } else if is_url_encoded_form_data {
-            url_encoded_form_data = parse_url_encoded_string_async(body.as_str()).await;
+            url_encoded_form_data = parse_url_encoded_string_async(body_as_text.as_str()).await;
         }
     }
     // else if the content is multipart form data...
@@ -268,16 +309,16 @@ pub async fn serialize_http_request_async(
 
     // println!("{content_type}");
 
-    return SerializableHttpPayload {
-        payload_id: request_id,
+    return SerializableHttpRequest {
+        request_id,
         remote_ip_address,
         remote_port,
         method,
         path,
         queries,
         headers,
+        body_as_text,
         body,
-        body_as_object,
         url_encoded_from_data: url_encoded_form_data,
     };
 }

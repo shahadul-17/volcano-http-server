@@ -34,6 +34,7 @@ fn main() {
     println!("[Configuration]");
     println!("Host: {}", configuration.host);
     println!("Port: {}", configuration.port);
+    println!("Powered by: {}", configuration.powered_by);
     println!("Worker thread count: {}", configuration.worker_thread_count);
     println!(
         "Maximum blocking thread count: {}",
