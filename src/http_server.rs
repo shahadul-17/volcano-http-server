@@ -6,21 +6,22 @@ use hyper::{
     service::{make_service_fn, service_fn},
     Body, Request, Response, Server,
 };
-use std::sync::{Arc, Mutex};
 use std::{
     convert::Infallible,
     net::SocketAddr,
     sync::atomic::{AtomicU64, Ordering},
 };
+use tokio::sync::watch;
+use watch::Receiver;
 
 use self::http_utilities::{SerializableHttpRequest, SerializableHttpResponse};
-use crate::ipc_handler::{self, IpcOptions};
+use crate::ipc_handler;
 
 static HTTP_REQUEST_COUNT: AtomicU64 = AtomicU64::new(1_u64);
 
 async fn get_parent_process_response_async(
     http_request: &SerializableHttpRequest,
-    ipc_options_arc: &Arc<Mutex<IpcOptions>>,
+    receiver: &Receiver<(u64, String)>,
 ) -> Response<Body> {
     // converts http request to JSON...
     let http_request_as_json = http_request.to_string();
@@ -29,9 +30,8 @@ async fn get_parent_process_response_async(
     // writes the http request data to the standard output as JSON...
     ipc_handler::write_line(&http_request_as_json);
 
-    // clones IPC Options ARC...
-    let cloned_ipc_options_arc = ipc_options_arc.clone();
-    let read_line_future = ipc_handler::read_line_async(cloned_ipc_options_arc, request_id);
+    let receiver = receiver.clone();
+    let read_line_future = ipc_handler::read_line_async(request_id, receiver);
     // reads the specified line...
     let line_read = tokio::spawn(read_line_future).await.unwrap();
     let serializable_http_response_option = SerializableHttpResponse::from(line_read);
@@ -53,17 +53,17 @@ async fn handle_request_async(
     request_id: u64,
     remote_address: SocketAddr,
     request: Request<Body>,
-    ipc_options_arc: &Arc<Mutex<IpcOptions>>,
+    receiver: &Receiver<(u64, String)>,
 ) -> Response<Body> {
-    let cloned_ipc_options_arc = ipc_options_arc.clone();
+    let receiver = receiver.clone();
     let http_request =
         http_utilities::serialize_http_request_async(request_id, remote_address, request).await;
-    let response = get_parent_process_response_async(&http_request, &cloned_ipc_options_arc).await;
+    let response = get_parent_process_response_async(&http_request, &receiver).await;
 
     return response;
 }
 
-pub async fn start_async(host: String, port: String, ipc_options_arc: &Arc<Mutex<IpcOptions>>) {
+pub async fn start_async(host: String, port: String, receiver: &Receiver<(u64, String)>) {
     let cloned_host = String::from(host.as_str());
     let cloned_port = String::from(port.as_str());
     let socket_address_option = http_utilities::create_socket_address(host, port);
@@ -76,22 +76,16 @@ pub async fn start_async(host: String, port: String, ipc_options_arc: &Arc<Mutex
 
     let make_service = make_service_fn(|socket: &AddrStream| {
         let remote_address = socket.remote_addr();
-        let cloned_ipc_options_arc = ipc_options_arc.clone();
+        let receiver = receiver.clone();
 
         async move {
             Ok::<_, Infallible>(service_fn(move |request: Request<Body>| {
                 let request_id = HTTP_REQUEST_COUNT.fetch_add(1_u64, Ordering::SeqCst);
-                let cloned_ipc_options_arc = cloned_ipc_options_arc.clone();
+                let receiver = receiver.clone();
 
                 async move {
                     Ok::<_, Infallible>(
-                        handle_request_async(
-                            request_id,
-                            remote_address,
-                            request,
-                            &cloned_ipc_options_arc,
-                        )
-                        .await,
+                        handle_request_async(request_id, remote_address, request, &receiver).await,
                     )
                 }
             }))

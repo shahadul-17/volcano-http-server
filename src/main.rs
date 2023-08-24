@@ -8,21 +8,16 @@ mod http_server;
 mod ipc_handler;
 
 use configuration::Configuration;
-use ipc_handler::IpcOptions;
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::time::Duration;
+use tokio::sync::watch;
 
 async fn main_async(configuration: &Configuration) {
     let configuration = configuration.clone();
     // let line_delimiter = arguments_parser::get_argument("lineDelimiter", &arguments);
-    let ipc_options = IpcOptions::new();
-    let ipc_options_mutex: Mutex<IpcOptions> = Mutex::new(ipc_options);
-    let ipc_options_arc: Arc<Mutex<IpcOptions>> = Arc::new(ipc_options_mutex);
-    let join_handle = ipc_handler::start(&ipc_options_arc);
+    let (sender, receiver) = watch::channel((0u64, String::from("")));
+    let join_handle = ipc_handler::start(sender);
 
-    http_server::start_async(configuration.host, configuration.port, &ipc_options_arc).await;
+    http_server::start_async(configuration.host, configuration.port, &receiver).await;
 
     _ = join_handle.join();
 }
