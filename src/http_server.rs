@@ -31,9 +31,8 @@ async fn get_parent_process_response_async(
     ipc_handler::write_line(&http_request_as_json);
 
     let receiver = receiver.clone();
-    let read_line_future = ipc_handler::read_line_async(request_id, receiver);
     // reads the specified line...
-    let line_read = tokio::spawn(read_line_future).await.unwrap();
+    let line_read = ipc_handler::read_line_async(request_id, receiver).await;
     let serializable_http_response_option = SerializableHttpResponse::from(line_read);
 
     if serializable_http_response_option.is_none() {
