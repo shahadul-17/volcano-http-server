@@ -233,8 +233,8 @@ pub async fn start_async(host: String, port: String, receiver: &Receiver<(u64, S
         return;
     }
 
-    let certificate_chain = load_certificate_chain(String::from("D:\\Users\\Shahadul Alam\\Documents\\GitHub Repositories\\volcano-http-server\\certs\\certificate.pem")).unwrap();
-    let private_key = load_private_key(String::from("D:\\Users\\Shahadul Alam\\Documents\\GitHub Repositories\\volcano-http-server\\certs\\certificate.key")).unwrap();
+    let certificate_chain = load_certificate_chain(String::from("./certs/certificate.pem")).unwrap();
+    let private_key = load_private_key(String::from("./certs/certificate.key")).unwrap();
     let tcp_listener = tcp_listener_result.unwrap();
 
     let mut config = rustls::ServerConfig::builder()
