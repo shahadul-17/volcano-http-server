@@ -14,15 +14,37 @@ use futures::{stream::StreamExt, SinkExt};
 use std::{
     convert::Infallible,
     net::SocketAddr,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{atomic::{AtomicU64, Ordering}, Arc},
 };
 use tokio::{sync::watch, net::TcpListener};
 use watch::Receiver;
+use rustls::{Certificate, PrivateKey};
+use tokio_rustls::TlsAcceptor;
 
 use self::http_utilities::{SerializableHttpRequest, SerializableHttpResponse};
 use crate::ipc_handler;
 
+use std::vec::Vec;
+use std::{fs::File, io::{self, BufReader}};
+
 static HTTP_REQUEST_COUNT: AtomicU64 = AtomicU64::new(1_u64);
+
+fn load_certificate_chain(file_path: String) -> io::Result<Vec<Certificate>> {
+    let file = File::open(file_path)?;
+    let mut buffered_reader = BufReader::new(file);
+    let certificate_chain = rustls_pemfile::certs(&mut buffered_reader)?;
+
+    return Ok(certificate_chain.into_iter().map(Certificate).collect());
+}
+
+fn load_private_key(file_path: String) -> io::Result<PrivateKey> {
+    let file = File::open(file_path)?;
+    let mut buffered_reader = BufReader::new(file);
+    let private_keys = rustls_pemfile::rsa_private_keys(&mut buffered_reader)?;
+    let private_key = PrivateKey(private_keys[0].clone());
+
+    return Ok(private_key);
+}
 
 async fn get_parent_process_response_async(
     http_request: &SerializableHttpRequest,
@@ -111,6 +133,9 @@ async fn handle_web_socket_async(request_id: u64,
                 println!("Received pong message: {:02X?}", msg);
             }
             Message::Close(msg) => {
+                _ = websocket_stream.close(msg).await;
+
+                break;
                 println!("[{}:{}:{}] Connection closed.", request_id, remote_address.ip(), remote_address.port());
                 
                 // No need to send a reply: tungstenite takes care of this for you.
@@ -177,7 +202,11 @@ async fn handle_request_async(
 
     let http_request =
         http_utilities::serialize_http_request_async(request_id, remote_address, request).await;
-    let response = get_parent_process_response_async(&http_request, &receiver).await;
+    // let response = get_parent_process_response_async(&http_request, &receiver).await;
+    let response = Response::builder()
+        .status(200)
+        .body(Body::from("Hello There!!!"))
+        .unwrap();
 
     return response;
 }
@@ -204,7 +233,17 @@ pub async fn start_async(host: String, port: String, receiver: &Receiver<(u64, S
         return;
     }
 
+    let certificate_chain = load_certificate_chain(String::from("D:\\Users\\Shahadul Alam\\Documents\\GitHub Repositories\\volcano-http-server\\certs\\certificate.pem")).unwrap();
+    let private_key = load_private_key(String::from("D:\\Users\\Shahadul Alam\\Documents\\GitHub Repositories\\volcano-http-server\\certs\\certificate.key")).unwrap();
     let tcp_listener = tcp_listener_result.unwrap();
+
+    let mut config = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(certificate_chain, private_key).unwrap();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
+
+    let tls_acceptor = TlsAcceptor::from(Arc::new(config));
     let http = Http::new();
 
     println!("Server listening on http://{cloned_host}:{cloned_port}");
@@ -222,10 +261,15 @@ pub async fn start_async(host: String, port: String, receiver: &Receiver<(u64, S
 
         let receiver = receiver.clone();
         let http = http.clone();
+        let tls_acceptor = tls_acceptor.clone();
 
         tokio::spawn(async move {
+            let tls_acceptor = tls_acceptor.clone();
             let http = http.clone();
             let (tcp_stream, remote_address) = accept_result.unwrap();
+            let accept_result = tls_acceptor.accept(tcp_stream).await;
+            let tls_stream = accept_result.unwrap();
+
             let service_function = service_fn(move |request: Request<Body>| {
                 let request_id = HTTP_REQUEST_COUNT.fetch_add(1_u64, Ordering::SeqCst);
                 let receiver = receiver.clone();
@@ -236,8 +280,9 @@ pub async fn start_async(host: String, port: String, receiver: &Receiver<(u64, S
                     )
                 }
             });
+
             let connection = http
-                .serve_connection(tcp_stream, service_function)
+                .serve_connection(tls_stream, service_function)
                 .with_upgrades();
 
             if let Err(error) = connection.await {
