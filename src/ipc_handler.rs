@@ -23,7 +23,7 @@ fn listen(sender: &Sender<(u64, String)>) {
         if result.is_err() {
             let error = result.unwrap_err();
 
-            eprintln!("An error occurred while reading line from the standard input: {error}");
+            eprintln!("An error occurred while reading line from the standard input: {}", error);
 
             continue;
         }
@@ -34,7 +34,7 @@ fn listen(sender: &Sender<(u64, String)>) {
         // if key separator is not found...
         if index_of_key_separator_option.is_none() {
             // we shall print an error message and continue to the next iteration...
-            eprintln!("Invalid line read from the standard input: {line}");
+            eprintln!("Invalid line read from the standard input: {}", line);
 
             continue;
         }
@@ -47,7 +47,7 @@ fn listen(sender: &Sender<(u64, String)>) {
             let error = key_extraction_result.unwrap_err();
 
             // we shall print an error message and continue to the next iteration...
-            eprintln!("An error occurred during key extraction: {error}");
+            eprintln!("An error occurred during key extraction: {}", error);
 
             continue;
         }
@@ -61,7 +61,7 @@ fn listen(sender: &Sender<(u64, String)>) {
             let error = send_result.unwrap_err();
 
             // we shall print an error message...
-            eprintln!("An error occurred while sending the received line: {error}");
+            eprintln!("An error occurred while sending the received line: {}", error);
         }
     }
 }

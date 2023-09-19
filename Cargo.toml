@@ -11,8 +11,14 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+futures = { version = "0.3.28" }
 hyper = { version = "0.14.27", features = ["full"] }
+rustls = { version = "0.21.7" }
+rustls-pemfile = { version = "1.0.3" }
 serde = { version = "^1.0.185", features = ["derive"] }
 serde_json = { version = "^1.0.105" }
 tokio = { version = "1.32.0", features = ["full"] }
+tokio-rustls = { version = "0.24.1" }
+tokio-tungstenite = { version = "0.20.0" }
+tungstenite = { version = "0.20.0" }
 urlencoding = { version = "2.1.3" }

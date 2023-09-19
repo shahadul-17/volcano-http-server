@@ -1,8 +1,31 @@
-use hyper::{body::HttpBody, http::HeaderValue, Body, HeaderMap, Request, Response};
+use hyper::{
+    body::HttpBody,
+    http::HeaderValue,
+    server::conn::Http,
+    Body,
+    HeaderMap,
+    Request,
+    Response,
+};
+use rustls::{Certificate, PrivateKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{to_string, Value};
-use std::{collections::HashMap, net::SocketAddr, str::FromStr};
+use std::{
+    collections::HashMap,
+    io,
+    net::{AddrParseError, SocketAddr},
+    str::FromStr,
+    borrow::BorrowMut,
+    sync::Arc,
+};
+use tokio_rustls::TlsAcceptor;
+// use tokio::{io::{AsyncRead, AsyncWrite}, sync::watch::Receiver};
 use urlencoding::decode;
+
+use crate::{
+    file_utilities,
+    http_server_configuration::HttpServerConfiguration,
+};
 
 const BOUNDARY_MARKER: &str = "boundary=";
 const BOUNDARY_MARKER_LENGTH: usize = BOUNDARY_MARKER.len();
@@ -29,7 +52,10 @@ impl SerializableHttpRequest {
         if result.is_err() {
             let error = result.unwrap_err();
 
-            eprintln!("An error occurred while serializing the HTTP request: {error}");
+            eprintln!(
+                "An error occurred while serializing the HTTP request: {}",
+                error
+            );
 
             return String::from("");
         }
@@ -58,7 +84,10 @@ impl SerializableHttpResponse {
         if deserialization_result.is_err() {
             let error = deserialization_result.unwrap_err();
 
-            eprintln!("An error occurred while deserializing into HTTP response: {error}");
+            eprintln!(
+                "An error occurred while deserializing into HTTP response: {}",
+                error
+            );
 
             return None;
         }
@@ -83,22 +112,13 @@ impl SerializableHttpResponse {
     }
 }
 
-pub fn create_socket_address(host: String, port: String) -> Option<SocketAddr> {
+pub fn create_socket_address(host: String, port: u16) -> Result<SocketAddr, AddrParseError> {
     let mut socket_address_as_string: String = host;
     socket_address_as_string.push_str(":");
-    socket_address_as_string.push_str(&port);
-
+    socket_address_as_string.push_str(port.to_string().as_str());
     let socket_address_result = SocketAddr::from_str(&socket_address_as_string);
 
-    if socket_address_result.is_err() {
-        let error = socket_address_result.unwrap_err();
-
-        eprintln!("An error occurred while parsing the provided bind address: {error}");
-
-        return None;
-    }
-
-    return Some(socket_address_result.unwrap());
+    return socket_address_result;
 }
 
 pub async fn to_serializable_header_map(
@@ -182,7 +202,7 @@ pub async fn parse_body_as_text_async(_content_type: &str, body: &mut Body) -> S
         if chunk.is_err() {
             let error = chunk.unwrap_err();
 
-            eprintln!("An error occurred while reading body as text: {error}");
+            eprintln!("An error occurred while reading body as text: {}", error);
 
             return String::from("");
         }
@@ -197,7 +217,10 @@ pub async fn parse_body_as_text_async(_content_type: &str, body: &mut Body) -> S
         if bytes_to_string_conversion_result.is_err() {
             let error = bytes_to_string_conversion_result.unwrap_err();
 
-            eprintln!("An error occurred while converting bytes to UTF-8 string: {error}");
+            eprintln!(
+                "An error occurred while converting bytes to UTF-8 string: {}",
+                error
+            );
 
             return String::from("");
         }
@@ -229,7 +252,7 @@ pub async fn parse_body_as_multipart_form_data_async(content_type: &str, body: &
         if chunk.is_err() {
             let error = chunk.unwrap_err();
 
-            eprintln!("An error occurred while reading body as text: {error}");
+            eprintln!("An error occurred while reading body as text: {}", error);
 
             return;
         }
@@ -250,8 +273,9 @@ pub async fn parse_body_as_multipart_form_data_async(content_type: &str, body: &
 pub async fn serialize_http_request_async(
     request_id: u64,
     remote_address: SocketAddr,
-    mut request: Request<Body>,
+    mut request: impl BorrowMut<Request<Body>>,
 ) -> SerializableHttpRequest {
+    let request: &mut Request<Body> = request.borrow_mut();
     let mut remote_ip_address = remote_address.ip().to_string();
     let remote_port = i32::from(remote_address.port());
     let method = request.method().as_str().to_owned();
@@ -290,7 +314,10 @@ pub async fn serialize_http_request_async(
             if result.is_err() {
                 let error = result.unwrap_err();
 
-                eprintln!("An error occurred while serializing body as JSON: {error}");
+                eprintln!(
+                    "An error occurred while serializing body as JSON: {}",
+                    error
+                );
             } else {
                 body = result.unwrap();
             }
@@ -321,4 +348,119 @@ pub async fn serialize_http_request_async(
         body,
         url_encoded_from_data: url_encoded_form_data,
     };
+}
+
+fn load_tls_certificate_chain(file_path: String) -> io::Result<Vec<Certificate>> {
+    let mut buffered_reader = file_utilities::create_buffered_file_reader(file_path)?;
+    let certificates = rustls_pemfile::certs(&mut buffered_reader)?;
+
+    if certificates.len() == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "No certificate found.",
+        ));
+    }
+
+    let certificate_chain = certificates.into_iter().map(Certificate).collect();
+
+    return Ok(certificate_chain);
+}
+
+fn load_tls_private_key(file_path: String) -> io::Result<PrivateKey> {
+    let mut buffered_reader = file_utilities::create_buffered_file_reader(file_path)?;
+    let private_keys = rustls_pemfile::rsa_private_keys(&mut buffered_reader)?;
+
+    if private_keys.len() == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "No private key found.",
+        ));
+    }
+
+    let private_key = PrivateKey(private_keys[0].clone());
+
+    return Ok(private_key);
+}
+
+pub fn create_http(configuration: &HttpServerConfiguration) -> Http {
+    // let configuration = configuration.clone();
+    let mut http = Http::new();
+
+    // if HTTP/2 is not enabled...
+    if !configuration.is_http2_enabled {
+        // we shall set HTTP/1 only to true...
+        http.http1_only(true);
+    }
+
+    return http;
+}
+
+pub fn create_tls_acceptor(configuration: &HttpServerConfiguration) -> Option<TlsAcceptor> {
+    let configuration = configuration.clone();
+
+    // if TLS is not enabled...
+    if !configuration.is_tls_enabled {
+        // we shall return none...
+        return None;
+    }
+
+    let tls_certificate_chain_result =
+        load_tls_certificate_chain(configuration.tls_certificate_path);
+
+    if tls_certificate_chain_result.is_err() {
+        let error = tls_certificate_chain_result.unwrap_err();
+
+        eprintln!(
+            "An error occurred while loading TLS certificate chain: {}",
+            error
+        );
+
+        return None;
+    }
+
+    let tls_private_key_result = load_tls_private_key(configuration.tls_private_key_path);
+
+    if tls_private_key_result.is_err() {
+        let error = tls_private_key_result.unwrap_err();
+
+        eprintln!("An error occurred while loading TLS private key: {}", error);
+
+        return None;
+    }
+
+    let tls_certificate_chain = tls_certificate_chain_result.unwrap();
+    let tls_private_key = tls_private_key_result.unwrap();
+    let tls_server_configuration_result = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(tls_certificate_chain, tls_private_key);
+
+    if tls_server_configuration_result.is_err() {
+        let error = tls_server_configuration_result.unwrap_err();
+
+        eprintln!(
+            "An error occurred while creating TLS server configuration: {}",
+            error
+        );
+
+        return None;
+    }
+
+    let mut alpn_protocols = vec![
+        b"h2".to_vec(),             // index 0...
+        b"http/1.1".to_vec(),       // index 1...
+        b"http/1.0".to_vec(),       // index 2...
+    ];
+
+    // if HTTP/2 is not enabled...
+    if !configuration.is_http2_enabled {
+        // we shall remove HTTP/2 from the alpn protocols...
+        alpn_protocols.remove(0);
+    }
+
+    let mut tls_server_configuration = tls_server_configuration_result.unwrap();
+    tls_server_configuration.alpn_protocols = alpn_protocols;
+    let tls_acceptor = TlsAcceptor::from(Arc::new(tls_server_configuration));
+
+    return Some(tls_acceptor);
 }
