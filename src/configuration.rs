@@ -1,4 +1,4 @@
-use crate::{arguments_parser::ArgumentsParser, system};
+use crate::{arguments_parser::ArgumentsParser, system, file_utilities};
 
 const DEFAULT_WORKER_THREAD_COUNT: &str = "16";
 const DEFAULT_MAXIMUM_BLOCKING_THREAD_COUNT: &str = "1024";
@@ -46,10 +46,33 @@ impl Configuration {
             IS_WEB_SOCKET_SERVER_ENABLED_BY_DEFAULT,
         );
         // uses TLS certificates...
-        let is_tls_enabled = arguments_parser.get_as_boolean("enableTls", IS_TLS_ENABLED_BY_DEFAULT);
-        let tls_certificate_path = arguments_parser.get_as_string("tlsCertificatePath", DEFAULT_TLS_CERTIFICATE_PATH);
-        let tls_private_key_path = arguments_parser.get_as_string("tlsPrivateKeyPath", DEFAULT_TLS_PRIVATE_KEY_PATH);
-        let is_http2_enabled = is_tls_enabled && arguments_parser.get_as_boolean("enableHttp2", IS_HTTP2_ENABLED_BY_DEFAULT);
+        let mut is_tls_enabled = arguments_parser.get_as_boolean("enableTls", IS_TLS_ENABLED_BY_DEFAULT);
+        let mut tls_certificate_path = String::from("");
+        let mut tls_private_key_path = String::from("");
+        let mut is_http2_enabled = false;
+
+        // if user has requested to enable TLS...
+        if is_tls_enabled {
+            let temporary_tls_certificate_path = arguments_parser.get_as_string("tlsCertificatePath", DEFAULT_TLS_CERTIFICATE_PATH);
+            let cloned_temporary_tls_certificate_path = temporary_tls_certificate_path.clone();
+            let temporary_tls_private_key_path = arguments_parser.get_as_string("tlsPrivateKeyPath", DEFAULT_TLS_PRIVATE_KEY_PATH);
+            let cloned_temporary_tls_private_key_path = temporary_tls_private_key_path.clone();
+            let does_tls_certificate_exist = file_utilities::exists(temporary_tls_certificate_path);
+            let does_tls_private_key_exist = file_utilities::exists(temporary_tls_private_key_path);
+
+            // TLS shall be enabled if and only if both the certificate and the key exist...
+            is_tls_enabled = does_tls_certificate_exist && does_tls_private_key_exist;
+
+            // if TLS is enabled...
+            if is_tls_enabled {
+                // we shall assign the certificate and the key paths...
+                tls_certificate_path = cloned_temporary_tls_certificate_path;
+                tls_private_key_path = cloned_temporary_tls_private_key_path;
+                // we shall also check if HTTP/2 shall be enabled...
+                is_http2_enabled = arguments_parser.get_as_boolean("enableHttp2", IS_HTTP2_ENABLED_BY_DEFAULT);
+            }
+        }
+
         // prepares the configuration...
         let configuration = Configuration {
             host,

@@ -232,9 +232,17 @@ pub async fn start_async(
 
     // checks if TLS is not enabled...
     if tls_acceptor_option.is_none() {
-        println!("Server listening on http://{}:{}", host, port);
+        if configuration.is_web_socket_server_enabled {
+            println!("WebSocket server listening on ws://{}:{}", host, port);
+        }
+
+        println!("HTTP server listening on http://{}:{}", host, port);
     } else {
-        println!("Server listening on https://{}:{}", host, port);
+        if configuration.is_web_socket_server_enabled {
+            println!("WebSocket server listening on wss://{}:{}", host, port);
+        }
+
+        println!("HTTP server listening on https://{}:{}", host, port);
     }
 
     loop {
