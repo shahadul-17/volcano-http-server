@@ -15,6 +15,7 @@ use crate::{
     http_utilities::{self, SerializableHttpRequest, SerializableHttpResponse},
     web_socket_utilities,
     ipc_handler,
+    id_generator::IdGenerator,
 };
 
 async fn get_parent_process_response_async(
@@ -225,7 +226,7 @@ pub async fn start_async(
     let tcp_listener = tcp_listener_result.unwrap();
     let http = http_utilities::create_http(configuration);
     let tls_acceptor_option = http_utilities::create_tls_acceptor(configuration);
-    let mut request_count = 1_u64;
+    let id_generator = IdGenerator::new();
 
     println!();
 
@@ -253,15 +254,7 @@ pub async fn start_async(
         let http = http.clone();
         let tls_acceptor_option = tls_acceptor_option.clone();
         let cloned_configuration = configuration.clone();
-        let request_id = request_count;
-
-        // if request count is equal to the maximum value...
-        if request_count == u64::MAX {
-            // we shall reset the request count...
-            request_count = 0_u64;
-        }
-
-        request_count = request_count + 1;
+        let id_generator = id_generator.clone();
 
         tokio::spawn(async move {
             let http = http.clone();
@@ -269,6 +262,8 @@ pub async fn start_async(
             let service_function = service_fn(move |request: Request<Body>| {
                 let receiver = receiver.clone();
                 let cloned_configuration = cloned_configuration.clone();
+                let id_generator = id_generator.clone();
+                let request_id = id_generator.generate();
 
                 async move {
                     Ok::<_, Infallible>(

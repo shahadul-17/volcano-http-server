@@ -1,3 +1,5 @@
+#[path = "utilities/id_generator.rs"]
+mod id_generator;
 #[path = "utilities/arguments_parser.rs"]
 mod arguments_parser;
 #[path = "utilities/file_utilities.rs"]
